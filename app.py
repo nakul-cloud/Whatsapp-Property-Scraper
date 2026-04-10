@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
@@ -25,11 +26,286 @@ def normalize_df_types(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def apply_na_for_text_columns(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    numeric_cols = {"rent_or_sell_price", "deposit"}
+    for col in out.columns:
+        if col in numeric_cols:
+            continue
+        out[col] = out[col].astype("string").fillna("NA")
+        out[col] = out[col].replace({"": "NA", "nan": "NA", "<NA>": "NA"})
+    return out
+
+
+def merge_combined_rows(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    merged = list(existing)
+    seen = {
+        (
+            str(r.get("property_id", "")),
+            str(r.get("owner_contact", "")),
+            str(r.get("date_stamp", "")),
+        )
+        for r in merged
+    }
+    for r in incoming:
+        key = (
+            str(r.get("property_id", "")),
+            str(r.get("owner_contact", "")),
+            str(r.get("date_stamp", "")),
+        )
+        if key in seen:
+            continue
+        merged.append(r)
+        seen.add(key)
+    return merged
+
+
+def render_header() -> None:
+    st.markdown(
+        """
+        <style>
+        /* Layout polish */
+        .block-container {
+            padding-top: 1.2rem;
+            padding-bottom: 2.0rem;
+        }
+        header[data-testid="stHeader"] {
+            background: transparent;
+        }
+        div[data-testid="stToolbar"] {
+            visibility: hidden;
+            height: 0px;
+        }
+
+        /* Sidebar styling */
+        section[data-testid="stSidebar"] {
+            border-right: 1px solid rgba(49, 51, 63, 0.12);
+        }
+        section[data-testid="stSidebar"] > div {
+            padding-top: 1.0rem;
+        }
+
+        .app-card {
+            border: 1px solid rgba(49, 51, 63, 0.2);
+            border-radius: 14px;
+            padding: 14px 16px;
+            background: rgba(120, 120, 120, 0.05);
+            margin-bottom: 10px;
+        }
+        .app-card.accent {
+            border-left: 6px solid var(--primary-color);
+        }
+        .kpi-title {
+            font-size: 0.80rem;
+            opacity: 0.75;
+            margin-bottom: 2px;
+        }
+        .kpi-value {
+            font-size: 1.3rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        /* Chart container */
+        .chart-card {
+            border: 1px solid rgba(49, 51, 63, 0.12);
+            border-radius: 14px;
+            padding: 10px 12px;
+            background: rgba(255, 255, 255, 0.02);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def kpi_card(title: str, value: str, *, accent: bool = True) -> None:
+    klass = "app-card accent" if accent else "app-card"
+    st.markdown(
+        f"""
+        <div class="{klass}">
+            <div class="kpi-title">{title}</div>
+            <div class="kpi-value">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _parse_whatsapp_datestamp_series(s: pd.Series) -> pd.Series:
+    """Best-effort parsing for values like '09/04, 2:49 pm'. Returns datetime64[ns] with NaT on failures."""
+    if s is None or s.empty:
+        return pd.to_datetime(pd.Series([], dtype="string"), errors="coerce")
+    raw = s.astype("string").fillna("")
+    # Common canonical format used by this app.
+    dt = pd.to_datetime(raw, format="%d/%m, %I:%M %p", errors="coerce")
+    if dt.notna().mean() >= 0.6:
+        return dt
+    # Fallback: let pandas infer.
+    return pd.to_datetime(raw, errors="coerce", dayfirst=True)
+
+
+def _chart_container(title: str) -> None:
+    st.markdown(f"**{title}**")
+    st.markdown('<div class="chart-card">', unsafe_allow_html=True)
+
+
+def _chart_container_end() -> None:
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("No data available for analysis.")
+        return
+
+    critical_cols = ["owner_contact", "area", "address", "rent_or_sell_price", "deposit"]
+    filled = 0
+    total = 0
+    for c in critical_cols:
+        if c not in df_display.columns:
+            continue
+        col = df_display[c].astype(str).str.strip()
+        filled += (~col.isin(["NA", "", "nan", "<NA>"])).sum()
+        total += len(col)
+    quality = (filled / total * 100) if total else 0.0
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        kpi_card("Total Leads", str(len(df)))
+    with c2:
+        unique_contacts = (
+            df_display["owner_contact"].astype(str).replace("NA", pd.NA).dropna().nunique()
+            if "owner_contact" in df_display
+            else 0
+        )
+        kpi_card("Unique Contacts", str(unique_contacts))
+    with c3:
+        avg_price = int(pd.to_numeric(df["rent_or_sell_price"], errors="coerce").dropna().mean()) if "rent_or_sell_price" in df else 0
+        kpi_card("Avg Price/Rent", f"{avg_price:,}" if avg_price else "NA")
+    with c4:
+        kpi_card("Data Quality", f"{quality:.1f}%")
+
+    st.divider()
+
+    # --- Dashboard-like charts (colorful) ---
+    data_cols = set(df_display.columns)
+
+    # 1) Data extraction timeline (if timestamp-like stamps exist)
+    dt = _parse_whatsapp_datestamp_series(df_display["date_stamp"]) if "date_stamp" in data_cols else pd.Series([], dtype="datetime64[ns]")
+    timeline_df = pd.DataFrame({"dt": dt}) if len(dt) else pd.DataFrame({"dt": []})
+    timeline_df = timeline_df.dropna()
+
+    # Provide a secondary series to mimic a multi-line dashboard (e.g., missing-fields count)
+    missing_fields_count = None
+    if "owner_contact" in data_cols:
+        missing_fields_count = df_display["owner_contact"].astype(str).str.strip().isin(["NA", "", "nan", "<NA>"]).astype(int)
+    else:
+        missing_fields_count = pd.Series([0] * len(df_display), dtype="int")
+
+    if not timeline_df.empty:
+        timeline_df["missing_contact"] = missing_fields_count.iloc[timeline_df.index].values
+        # bucket to minute for stable charting
+        timeline_df["bucket"] = timeline_df["dt"].dt.floor("min")
+        agg = (
+            timeline_df.groupby("bucket", as_index=False)
+            .agg(leads=("bucket", "size"), missing_contact=("missing_contact", "sum"))
+            .sort_values("bucket")
+        )
+        long = agg.melt(id_vars=["bucket"], value_vars=["leads", "missing_contact"], var_name="series", value_name="value")
+        series_labels = {"leads": "Leads", "missing_contact": "Missing Contact"}
+        long["series"] = long["series"].map(series_labels).fillna(long["series"])
+
+        _chart_container("Data Extraction")
+        chart = (
+            alt.Chart(long)
+            .mark_line(point=True)
+            .encode(
+                x=alt.X("bucket:T", title="Time"),
+                y=alt.Y("value:Q", title="Count"),
+                color=alt.Color("series:N", scale=alt.Scale(scheme="category10"), legend=alt.Legend(title="")),
+                tooltip=[
+                    alt.Tooltip("bucket:T", title="Time"),
+                    alt.Tooltip("series:N", title="Series"),
+                    alt.Tooltip("value:Q", title="Value"),
+                ],
+            )
+            .properties(height=320)
+        )
+        st.altair_chart(chart, use_container_width=True)
+        _chart_container_end()
+    else:
+        st.info("Timeline chart needs WhatsApp-style timestamps in `date_stamp`.")
+
+    # 2) Bottom row charts
+    left, right = st.columns(2)
+
+    with left:
+        _chart_container("Property Type Distribution")
+        if "property_type" in data_cols:
+            vc = df_display["property_type"].astype("string").fillna("NA")
+            vc = vc.replace({"": "NA"})
+            type_counts = vc.value_counts().reset_index()
+            type_counts.columns = ["property_type", "count"]
+            type_counts = type_counts[type_counts["property_type"] != "NA"]
+            if type_counts.empty:
+                st.info("No property type data available.")
+            else:
+                chart = (
+                    alt.Chart(type_counts)
+                    .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                    .encode(
+                        x=alt.X("count:Q", title="Count"),
+                        y=alt.Y("property_type:N", sort="-x", title=""),
+                        color=alt.Color("property_type:N", scale=alt.Scale(scheme="tableau10"), legend=None),
+                        tooltip=["property_type:N", "count:Q"],
+                    )
+                    .properties(height=260)
+                )
+                st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("No property type column found.")
+        _chart_container_end()
+
+    with right:
+        _chart_container("Top Areas")
+        if "area" in data_cols:
+            vc = df_display["area"].astype("string").replace("NA", pd.NA).dropna().str.strip()
+            area_counts = vc.value_counts().head(12).reset_index()
+            area_counts.columns = ["area", "count"]
+            if area_counts.empty:
+                st.info("No area data available.")
+            else:
+                chart = (
+                    alt.Chart(area_counts)
+                    .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                    .encode(
+                        x=alt.X("area:N", sort="-y", title=""),
+                        y=alt.Y("count:Q", title="Count"),
+                        color=alt.Color("area:N", scale=alt.Scale(scheme="set3"), legend=None),
+                        tooltip=["area:N", "count:Q"],
+                    )
+                    .properties(height=260)
+                )
+                st.altair_chart(chart, use_container_width=True)
+        else:
+            st.info("No area column found.")
+        _chart_container_end()
+
+
 def main() -> None:
     load_dotenv()
 
     st.set_page_config(page_title="WhatsApp Property Lead Extractor", layout="wide")
+    render_header()
     st.title("WhatsApp Property Lead Extractor")
+
+    if "combined_rows" not in st.session_state:
+        st.session_state.combined_rows = []
+    if "latest_rows" not in st.session_state:
+        st.session_state.latest_rows = []
+    if "latest_meta" not in st.session_state:
+        st.session_state.latest_meta = {}
 
     with st.sidebar:
         st.subheader("Settings")
@@ -71,43 +347,81 @@ def main() -> None:
     with col2:
         st.caption("Rule-based parsing runs first. AI is only used when >3 important fields are missing, and it batches messages into one request.")
 
-    if not run:
+    if run:
+        raw = normalize_whitespace(raw)
+        if not raw:
+            st.warning("Please paste WhatsApp messages first.")
+            return
+
+        with st.spinner("Processing messages..."):
+            rows, meta = process_raw_text(
+                raw,
+                enable_ai_fallback=enable_ai,
+                groq_api_key=groq_key,
+                groq_model=groq_model,
+                area_paths=[area_path] if area_path.strip() else None,
+            )
+        st.session_state.latest_rows = rows
+        st.session_state.latest_meta = meta
+        st.session_state.combined_rows = merge_combined_rows(st.session_state.combined_rows, rows)
+
+    if not st.session_state.latest_rows:
+        st.info("Process messages to see extracted leads.")
         return
 
-    raw = normalize_whitespace(raw)
-    if not raw:
-        st.warning("Please paste WhatsApp messages first.")
-        return
-
-    with st.spinner("Processing messages..."):
-        rows, meta = process_raw_text(
-            raw,
-            enable_ai_fallback=enable_ai,
-            groq_api_key=groq_key,
-            groq_model=groq_model,
-            area_paths=[area_path] if area_path.strip() else None,
-        )
-
+    rows = st.session_state.latest_rows
+    meta = st.session_state.latest_meta
     df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     df = normalize_df_types(df)
+    df_display = apply_na_for_text_columns(df)
 
-    st.subheader("Extracted Leads")
-    st.dataframe(df, width="stretch", hide_index=True)
+    combined_df = pd.DataFrame(st.session_state.combined_rows, columns=OUTPUT_COLUMNS)
+    combined_df = normalize_df_types(combined_df) if not combined_df.empty else combined_df
+    combined_df_display = apply_na_for_text_columns(combined_df) if not combined_df.empty else combined_df
 
-    st.download_button(
-        "Download CSV",
-        data=df_to_csv_bytes(df),
-        file_name="whatsapp_property_leads.csv",
-        mime="text/csv",
-        width="stretch",
-    )
+    dl1, dl2, dl3 = st.columns([1, 1, 1])
+    with dl1:
+        st.download_button(
+            "Download Separate CSV (Current Batch)",
+            data=df_to_csv_bytes(df_display),
+            file_name="whatsapp_property_leads_current.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+    with dl2:
+        st.download_button(
+            "Download Combined CSV (All Batches)",
+            data=df_to_csv_bytes(combined_df_display if not combined_df.empty else df_display),
+            file_name="whatsapp_property_leads_combined.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+    with dl3:
+        if st.button("Reset Combined Cache", width="stretch"):
+            st.session_state.combined_rows = []
+            st.success("Combined cache reset.")
 
-    with st.expander("Audit / Failed messages (raw + missing fields)"):
+    tab1, tab2, tab3, tab4 = st.tabs(["Extracted Leads", "Analysis", "Failed Messages", "Processing Details"])
+
+    with tab1:
+        st.subheader("Extracted Leads")
+        st.dataframe(df_display, width="stretch", hide_index=True)
+        if not combined_df_display.empty:
+            st.caption(f"Combined cache currently has {len(combined_df_display)} unique leads.")
+
+    with tab2:
+        st.subheader("Processing Analysis")
+        render_analysis(df, df_display)
+
+    with tab3:
         failed = meta.get("audit_failed", []) or []
         if not failed:
             st.success("No failed messages. All important fields were extracted.")
         else:
             fail_df = pd.DataFrame(failed, columns=["idx", "date_stamp", "missing_fields", "raw_message"])
+            if "missing_fields" in fail_df.columns:
+                fail_df["missing_fields"] = fail_df["missing_fields"].fillna("NA").replace({"": "NA"})
+            fail_df = apply_na_for_text_columns(fail_df)
             st.dataframe(fail_df, width="stretch", hide_index=True)
             st.download_button(
                 "Download failed-messages CSV",
@@ -117,7 +431,7 @@ def main() -> None:
                 width="stretch",
             )
 
-    with st.expander("Processing details"):
+    with tab4:
         st.json({k: v for k, v in meta.items() if k != "debug"})
         if meta.get("failures"):
             st.warning("Some failures occurred. See details above.")

@@ -41,10 +41,81 @@ OUTPUT_COLUMNS = [
 ]
 
 
-TIMESTAMP_RE = re.compile(
-    r"^\[(?P<date>\d{1,2}/\d{1,2})(?:/\d{2,4})?,\s*(?P<time>\d{1,2}:\d{2}\s*(?:am|pm))\]\s*(?P<header>.*)$",
+TIMESTAMP_BOUNDARY_RE = re.compile(
+    r"^\[(?:\d{1,2}/\d{1,2}(?:/\d{2,4})?\s*,\s*\d{1,2}:\d{2}\s*(?:am|pm)|\d{1,2}:\d{2}\s*(?:am|pm)\s*,\s*\d{1,2}/\d{1,2}(?:/\d{2,4})?)\]\s*.*$",
     re.IGNORECASE | re.MULTILINE,
 )
+
+TIMESTAMP_DATE_FIRST_RE = re.compile(
+    r"^\[(?P<date>\d{1,2}/\d{1,2})(?:/\d{2,4})?,\s*(?P<time>\d{1,2}:\d{2}\s*(?:am|pm))\]\s*(?P<header>.*)$",
+    re.IGNORECASE,
+)
+
+TIMESTAMP_TIME_FIRST_RE = re.compile(
+    r"^\[(?P<time>\d{1,2}:\d{2}\s*(?:am|pm))\s*,\s*(?P<date>\d{1,2}/\d{1,2})(?:/\d{2,4})?\]\s*(?P<header>.*)$",
+    re.IGNORECASE,
+)
+
+DATE_LINE_RE = re.compile(r"^\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*$")
+
+
+def _parse_timestamp_header_line(line: str) -> Optional[Dict[str, str]]:
+    line = line.strip()
+    m = TIMESTAMP_DATE_FIRST_RE.match(line)
+    if m:
+        return {
+            "date": m.group("date"),
+            "time": normalize_whitespace(m.group("time")).lower(),
+            "header": normalize_whitespace(m.group("header") or ""),
+        }
+    m = TIMESTAMP_TIME_FIRST_RE.match(line)
+    if m:
+        return {
+            "date": m.group("date"),
+            "time": normalize_whitespace(m.group("time")).lower(),
+            "header": normalize_whitespace(m.group("header") or ""),
+        }
+    return None
+
+
+def _split_by_date_markers(raw_text: str) -> List[Dict[str, str]]:
+    """
+    Fallback splitter for copied chat blocks where WhatsApp headers may be
+    missing/inconsistent, but each lead begins with a date line like 10.04.2026.
+    """
+    lines = raw_text.split("\n")
+    if not lines:
+        return []
+
+    start_idxs: List[int] = []
+    for i, ln in enumerate(lines):
+        if not DATE_LINE_RE.match(ln.strip()):
+            continue
+        lookahead = "\n".join(lines[i + 1 : i + 6]).lower()
+        if "rental property" in lookahead or "resale property" in lookahead or "online property" in lookahead:
+            start_idxs.append(i)
+
+    if not start_idxs:
+        return []
+
+    msgs: List[Dict[str, str]] = []
+    for pos, sidx in enumerate(start_idxs):
+        eidx = start_idxs[pos + 1] if pos + 1 < len(start_idxs) else len(lines)
+        block_lines = lines[sidx:eidx]
+        raw_block = normalize_whitespace("\n".join(block_lines))
+        if not raw_block:
+            continue
+        date_line = lines[sidx].strip()
+        body = normalize_whitespace("\n".join(block_lines[1:]))
+        msgs.append(
+            {
+                "date_stamp": date_line,
+                "header": "",
+                "body": body,
+                "raw": raw_block,
+            }
+        )
+    return msgs
 
 
 def split_whatsapp_messages(raw_text: str) -> List[Dict[str, str]]:
@@ -58,8 +129,13 @@ def split_whatsapp_messages(raw_text: str) -> List[Dict[str, str]]:
     if not raw_text:
         return []
 
-    matches = list(TIMESTAMP_RE.finditer(raw_text))
+    matches = list(TIMESTAMP_BOUNDARY_RE.finditer(raw_text))
     if not matches:
+        # fallback 0: date-line based split for copied lead blocks
+        date_msgs = _split_by_date_markers(raw_text)
+        if date_msgs:
+            return date_msgs
+
         # fallback 1: tabular/TSV-like rows from CRM exports
         tabular_msgs: List[Dict[str, str]] = []
         for ln in raw_text.split("\n"):
@@ -115,8 +191,12 @@ def split_whatsapp_messages(raw_text: str) -> List[Dict[str, str]]:
         end = matches[i + 1].start() if i + 1 < len(matches) else len(raw_text)
         chunk = raw_text[start:end].strip()
         body = raw_text[m.end() : end].strip()
-        date_stamp = f"{m.group('date')}, {m.group('time')}"
-        header = normalize_whitespace(m.group("header") or "")
+        header_line = raw_text[m.start() : m.end()].strip()
+        parsed_header = _parse_timestamp_header_line(header_line)
+        if not parsed_header:
+            continue
+        date_stamp = f"{parsed_header['date']}, {parsed_header['time']}"
+        header = parsed_header["header"]
         if not body and not header:
             continue
         if chunk:
@@ -128,7 +208,13 @@ def split_whatsapp_messages(raw_text: str) -> List[Dict[str, str]]:
                     "raw": chunk,
                 }
             )
-    return [m for m in msgs if normalize_whitespace(m.get("raw", ""))]
+    msgs = [m for m in msgs if normalize_whitespace(m.get("raw", ""))]
+    # If we got only one chunk, try date-marker split as a stronger fallback.
+    if len(msgs) <= 1:
+        date_msgs = _split_by_date_markers(raw_text)
+        if len(date_msgs) > len(msgs):
+            return date_msgs
+    return msgs
 
 
 PROPERTY_CODE_RE = re.compile(
@@ -329,6 +415,20 @@ def _normalize_floor(value: str) -> str:
     m2 = re.match(r"^(\d{1,2}(?:st|nd|rd|th)?)$", v)
     if m2:
         return f"{m2.group(1)} Floor"
+    return normalize_title(value)
+
+
+def _normalize_furnishing(value: str) -> str:
+    v = normalize_whitespace(value).lower().replace("_", " ").replace("-", " ")
+    v = re.sub(r"\s+", " ", v).strip()
+    if not v:
+        return ""
+    if "semi" in v and "furnished" in v:
+        return "Semi-Furnished"
+    if "unfurnished" in v or ("un" in v and "furnished" in v):
+        return "Unfurnished"
+    if "furnished" in v:
+        return "Furnished"
     return normalize_title(value)
 
 
@@ -901,7 +1001,7 @@ def process_raw_text(
         out["owner_name"] = normalize_title(str(out.get("owner_name", "")))
         out["area"] = normalize_whitespace(str(out.get("area", "")))
         out["address"] = normalize_whitespace(str(out.get("address", "")))
-        out["furnishing_status"] = normalize_title(str(out.get("furnishing_status", "")))
+        out["furnishing_status"] = _normalize_furnishing(str(out.get("furnishing_status", "")))
         out["availability"] = normalize_title(str(out.get("availability", "")))
         out["floor"] = _normalize_floor(str(out.get("floor", ""))) if str(out.get("floor", "")).strip() else ""
         out["rent_or_sell_price"] = out.get("rent_or_sell_price") or None
