@@ -292,6 +292,29 @@ def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
             st.info("No area column found.")
         _chart_container_end()
 
+    # 3) Price distribution (histogram)
+    price_series = pd.to_numeric(df.get("rent_or_sell_price"), errors="coerce") if "rent_or_sell_price" in df else pd.Series([], dtype="float")
+    price_series = price_series.dropna()
+    st.markdown("\n")
+    _chart_container("Price Distribution")
+    if not price_series.empty:
+        price_df = pd.DataFrame({"price": price_series})
+        chart = (
+            alt.Chart(price_df)
+            .mark_bar(binSpacing=2, cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+            .encode(
+                x=alt.X("price:Q", bin=alt.Bin(maxbins=20), title="Price / Rent"),
+                y=alt.Y("count():Q", title="Count"),
+                color=alt.Color("count():Q", scale=alt.Scale(scheme="blues"), legend=None),
+                tooltip=[alt.Tooltip("count():Q", title="Count")],
+            )
+            .properties(height=260)
+        )
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.info("No price data available.")
+    _chart_container_end()
+
 
 def main() -> None:
     load_dotenv()
@@ -336,7 +359,7 @@ def main() -> None:
         )
 
     raw = st.text_area(
-        "Paste WhatsApp chat text here (10–50 messages supported)",
+        "Paste WhatsApp chat text here (10–100 messages supported)",
         height=320,
         placeholder="[09/04, 2:49 pm] Easy Prop New:\nProperty Code: ...\nOwner: ...\nRent: 20 K\nDeposit: 60 K\n...\n\n[09/04, 3:10 pm] ...",
     )
