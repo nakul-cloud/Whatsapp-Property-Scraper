@@ -41,3 +41,12 @@ AREAS_FILE=
 - `utils.py`: cleaning, price normalization, fuzzy area matching
 - `areas_pune.txt`: bundled Pune area list (pipe-separated)
 
+## Documentation
+
+- `docs/DETAILED_IMPLEMENTATION.md`
+- `docs/PARSING_RULES.md`
+- `docs/CSV_SCHEMA.md`
+- `docs/AI_FALLBACK_POLICY.md`
+- `docs/VALIDATION_PLAYBOOK.md`
+- `docs/TROUBLESHOOTING.md`
+
