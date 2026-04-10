@@ -1,6 +1,13 @@
 # WhatsApp Property Lead Extractor (Streamlit)
 
-Production-ready Streamlit app to extract structured real-estate property lead data from bulk WhatsApp messages (10–50 at once) using a **rule-based parser first**, with optional **Groq AI fallback** only when many important fields are missing.
+Extract structured real-estate lead data from bulk WhatsApp messages (10-100 at once) using a **rule-based parser first**, with optional **Groq AI fallback** only when many important fields are missing.
+
+## Overview
+
+- Paste WhatsApp chats or raw lead blocks and get structured rows.
+- Exports CSV for current batch and combined cache.
+- Analysis dashboard with metrics and charts for quick QA.
+- Optional Groq fallback only when key fields are missing.
 
 ## Setup (Windows / PowerShell)
 
@@ -43,10 +50,10 @@ AREAS_FILE=
 
 ## Documentation
 
-- `docs/DETAILED_IMPLEMENTATION.md`
-- `docs/PARSING_RULES.md`
-- `docs/CSV_SCHEMA.md`
-- `docs/AI_FALLBACK_POLICY.md`
-- `docs/VALIDATION_PLAYBOOK.md`
-- `docs/TROUBLESHOOTING.md`
+- Detailed guide: `docs/APP_GUIDE.md`
+- Parser rules: `docs/PARSING_RULES.md`
+- CSV schema: `docs/CSV_SCHEMA.md`
+- AI fallback policy: `docs/AI_FALLBACK_POLICY.md`
+- Validation playbook: `docs/VALIDATION_PLAYBOOK.md`
+- Troubleshooting: `docs/TROUBLESHOOTING.md`
 

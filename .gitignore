@@ -19,6 +19,14 @@ env/
 *.csv
 failed_messages_audit.csv
 
+# Streamlit
+.streamlit/
+
+# Build artifacts
+dist/
+build/
+*.log
+
 # IDE/OS
 .DS_Store
 Thumbs.db
