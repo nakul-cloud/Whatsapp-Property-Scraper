@@ -16,6 +16,15 @@ def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
+def normalize_df_types(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    # Keep nullable integers to avoid Arrow errors from mixed '' + int types.
+    for col in ["rent_or_sell_price", "deposit"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype("Int64")
+    return out
+
+
 def main() -> None:
     load_dotenv()
 
@@ -58,7 +67,7 @@ def main() -> None:
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        run = st.button("Process Messages", type="primary", use_container_width=True)
+        run = st.button("Process Messages", type="primary", width="stretch")
     with col2:
         st.caption("Rule-based parsing runs first. AI is only used when >3 important fields are missing, and it batches messages into one request.")
 
@@ -80,16 +89,17 @@ def main() -> None:
         )
 
     df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
+    df = normalize_df_types(df)
 
     st.subheader("Extracted Leads")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df, width="stretch", hide_index=True)
 
     st.download_button(
         "Download CSV",
         data=df_to_csv_bytes(df),
         file_name="whatsapp_property_leads.csv",
         mime="text/csv",
-        use_container_width=True,
+        width="stretch",
     )
 
     with st.expander("Audit / Failed messages (raw + missing fields)"):
@@ -98,13 +108,13 @@ def main() -> None:
             st.success("No failed messages. All important fields were extracted.")
         else:
             fail_df = pd.DataFrame(failed, columns=["idx", "date_stamp", "missing_fields", "raw_message"])
-            st.dataframe(fail_df, use_container_width=True, hide_index=True)
+            st.dataframe(fail_df, width="stretch", hide_index=True)
             st.download_button(
                 "Download failed-messages CSV",
                 data=df_to_csv_bytes(fail_df),
                 file_name="failed_messages_audit.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width="stretch",
             )
 
     with st.expander("Processing details"):

@@ -143,14 +143,18 @@ CONTACT_LINE_RE = re.compile(r"^\s*(?:owner\s*)?(?:mobile|phone|contact|number|n
 SUB_TYPE_RE = re.compile(r"\b(\d+)\s*(bhk|rk)\b", re.IGNORECASE)
 
 SIZE_RE = re.compile(
-    r"\b(?:carpet\s*area|built\s*up|area|size)\b\s*[:\-]?\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(sq\.?\s*ft|sq\s*ft|sqft|sft|sf|sq\.?\s*m|sqm)?",
+    r"\b(?:carpet\s*area|super\s*built[-\s]*up(?:\s*area)?|builtup(?:\s*area)?|built\s*up(?:\s*area)?|area|size)\b\s*[:\-]?\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(sq\.?\s*ft|sq\s*ft|sqft|sft|sf|sq\.?\s*m|sqm)?",
     re.IGNORECASE,
 )
 SIZE_INLINE_RE = re.compile(
     r"\b([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(sq\.?\s*ft|sq\s*ft|sqft|sft|sf|sq\.?\s*m|sqm)\b",
     re.IGNORECASE,
 )
-SIZE_CARPET_RE = re.compile(r"\b(?:carpet|built\s*up)\b\s*[:\-]?\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\b", re.IGNORECASE)
+SIZE_CARPET_RE = re.compile(r"\b(?:carpet|super\s*built[-\s]*up|builtup|built\s*up)\b\s*[:\-]?\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\b", re.IGNORECASE)
+SIZE_AFTER_LABEL_RE = re.compile(
+    r"\b(?:carpet|super\s*built[-\s]*up|builtup|built\s*up)\s*area?\s*[:\-]?\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\b",
+    re.IGNORECASE,
+)
 
 FURNISHING_RE = re.compile(r"\b(semi\s*furnished|furnished|unfurnished)\b", re.IGNORECASE)
 
@@ -266,6 +270,24 @@ def _build_rich_address(lines: List[str], area: str) -> str:
     return address[:220]
 
 
+def _infer_area_from_lines(lines: List[str], areas: List[str]) -> str:
+    if not lines or not areas:
+        return ""
+    # Try most location-like lines first.
+    candidates = [ln for ln in lines if _looks_like_address_line(ln)]
+    if not candidates:
+        candidates = lines
+    best_area = ""
+    best_score = 0
+    for ln in candidates:
+        m = best_area_match(ln, areas)
+        if m.area and m.score > best_score:
+            best_area = m.area
+            best_score = m.score
+    # Lower threshold slightly for fallback to reduce false "missing area"
+    return best_area if best_score >= 55 else ""
+
+
 def _strip_embedded_timestamps(text: str) -> str:
     # Remove WhatsApp-like timestamp fragments so year values are not treated as prices.
     text = re.sub(
@@ -337,6 +359,10 @@ def _extract_size(lines: List[str]) -> str:
         mc = SIZE_CARPET_RE.search(ln)
         if mc:
             return f"{mc.group(1).replace(',', '')} sq.ft"
+    for ln in lines:
+        ml = SIZE_AFTER_LABEL_RE.search(ln)
+        if ml:
+            return f"{ml.group(1).replace(',', '')} sq.ft"
     return ""
 
 
@@ -611,8 +637,8 @@ def _default_row(date_stamp: str) -> Dict[str, Any]:
         "tenant_preference": "",
         "additional_details": "",
         "age": "",
-        "rent_or_sell_price": "",
-        "deposit": "",
+        "rent_or_sell_price": None,
+        "deposit": None,
         "date_stamp": date_stamp,
         "rent_sold_out": "",
     }
@@ -694,6 +720,8 @@ def rule_parse_message(msg: Dict[str, str], areas: List[str]) -> Tuple[Dict[str,
         # still prefer not returning Other; keep match but flag lower confidence
         row["area"] = area_match.area
         debug["notes"].append(f"Low-confidence area match ({area_match.score})")
+    if not row["area"]:
+        row["area"] = _infer_area_from_lines(lines, areas)
 
     # address heuristic: build richer address including apartment/house context
     row["address"] = _build_rich_address(lines, row["area"])
@@ -876,6 +904,8 @@ def process_raw_text(
         out["furnishing_status"] = normalize_title(str(out.get("furnishing_status", "")))
         out["availability"] = normalize_title(str(out.get("availability", "")))
         out["floor"] = _normalize_floor(str(out.get("floor", ""))) if str(out.get("floor", "")).strip() else ""
+        out["rent_or_sell_price"] = out.get("rent_or_sell_price") or None
+        out["deposit"] = out.get("deposit") or None
 
         # Auto-assign random unique property_id if missing
         pid = normalize_whitespace(str(out.get("property_id", "")))

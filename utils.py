@@ -132,7 +132,9 @@ def load_pune_areas(
     if preferred_paths:
         candidates.extend(Path(p) for p in preferred_paths)
     candidates.append(Path(__file__).with_name("areas_pune.txt"))
+    candidates.append(Path(__file__).with_name("areas_pune_villages.txt"))
 
+    merged: list[str] = []
     for p in candidates:
         try:
             if not p.exists():
@@ -162,19 +164,18 @@ def load_pune_areas(
                 continue
             cleaned.append(part)
 
-        # de-dupe while preserving order
-        seen = set()
-        uniq = []
-        for a in cleaned:
-            key = a.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            uniq.append(a)
-        if uniq:
-            return uniq
+        merged.extend(cleaned)
 
-    return []
+    # de-dupe while preserving order across all files
+    seen = set()
+    uniq = []
+    for a in merged:
+        key = a.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append(a)
+    return uniq
 
 
 @dataclass(frozen=True)
