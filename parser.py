@@ -56,7 +56,9 @@ TIMESTAMP_TIME_FIRST_RE = re.compile(
     re.IGNORECASE,
 )
 
-DATE_LINE_RE = re.compile(r"^\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*$")
+DATE_LINE_START_RE = re.compile(
+    r"^\s*[\"']?(?P<date>\d{1,2}[./-]\d{1,2}[./-]\d{2,4})[\"']?\s*(?P<rest>.*)$"
+)
 
 
 def _parse_timestamp_header_line(line: str) -> Optional[Dict[str, str]]:
@@ -87,26 +89,32 @@ def _split_by_date_markers(raw_text: str) -> List[Dict[str, str]]:
     if not lines:
         return []
 
-    start_idxs: List[int] = []
+    start_markers: List[Tuple[int, str, str]] = []
     for i, ln in enumerate(lines):
-        if not DATE_LINE_RE.match(ln.strip()):
+        m = DATE_LINE_START_RE.match(ln.strip())
+        if not m:
             continue
-        lookahead = "\n".join(lines[i + 1 : i + 6]).lower()
-        if "rental property" in lookahead or "resale property" in lookahead or "online property" in lookahead:
-            start_idxs.append(i)
+        rest = normalize_whitespace(m.group("rest") or "")
+        lookahead = "\n".join([rest] + lines[i + 1 : i + 6]).lower()
+        if any(k in lookahead for k in ["rental property", "resale property", "online property", "property code", "owner"]):
+            start_markers.append((i, m.group("date"), rest))
 
-    if not start_idxs:
+    if not start_markers:
         return []
 
     msgs: List[Dict[str, str]] = []
-    for pos, sidx in enumerate(start_idxs):
-        eidx = start_idxs[pos + 1] if pos + 1 < len(start_idxs) else len(lines)
+    for pos, (sidx, date_line, rest) in enumerate(start_markers):
+        eidx = start_markers[pos + 1][0] if pos + 1 < len(start_markers) else len(lines)
         block_lines = lines[sidx:eidx]
-        raw_block = normalize_whitespace("\n".join(block_lines))
-        if not raw_block:
+        body_lines: List[str] = []
+        if rest:
+            body_lines.append(rest)
+        if len(block_lines) > 1:
+            body_lines.extend(block_lines[1:])
+        raw_block = normalize_whitespace("\n".join([date_line] + body_lines))
+        if not raw_block.strip():
             continue
-        date_line = lines[sidx].strip()
-        body = normalize_whitespace("\n".join(block_lines[1:]))
+        body = normalize_whitespace("\n".join(body_lines))
         msgs.append(
             {
                 "date_stamp": date_line,

@@ -141,6 +141,11 @@ def _parse_whatsapp_datestamp_series(s: pd.Series) -> pd.Series:
     dt = pd.to_datetime(raw, format="%d/%m, %I:%M %p", errors="coerce")
     if dt.notna().mean() >= 0.6:
         return dt
+    # Try common date-only formats seen in copied lead blocks.
+    for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%y", "%d/%m/%y", "%d-%m-%y"]:
+        dt2 = pd.to_datetime(raw, format=fmt, errors="coerce")
+        if dt2.notna().mean() >= 0.6:
+            return dt2
     # Fallback: let pandas infer.
     return pd.to_datetime(raw, errors="coerce", dayfirst=True)
 
@@ -203,39 +208,61 @@ def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
     else:
         missing_fields_count = pd.Series([0] * len(df_display), dtype="int")
 
-    if not timeline_df.empty:
+    if not timeline_df.empty and timeline_df["dt"].notna().any():
         timeline_df["missing_contact"] = missing_fields_count.iloc[timeline_df.index].values
-        # bucket to minute for stable charting
-        timeline_df["bucket"] = timeline_df["dt"].dt.floor("min")
+        # bucket to day if time is missing, else minute
+        timeline_df["bucket"] = timeline_df["dt"].dt.floor("D")
         agg = (
             timeline_df.groupby("bucket", as_index=False)
             .agg(leads=("bucket", "size"), missing_contact=("missing_contact", "sum"))
             .sort_values("bucket")
         )
-        long = agg.melt(id_vars=["bucket"], value_vars=["leads", "missing_contact"], var_name="series", value_name="value")
-        series_labels = {"leads": "Leads", "missing_contact": "Missing Contact"}
-        long["series"] = long["series"].map(series_labels).fillna(long["series"])
-
-        _chart_container("Data Extraction")
-        chart = (
-            alt.Chart(long)
-            .mark_line(point=True)
-            .encode(
-                x=alt.X("bucket:T", title="Time"),
-                y=alt.Y("value:Q", title="Count"),
-                color=alt.Color("series:N", scale=alt.Scale(scheme="category10"), legend=alt.Legend(title="")),
-                tooltip=[
-                    alt.Tooltip("bucket:T", title="Time"),
-                    alt.Tooltip("series:N", title="Series"),
-                    alt.Tooltip("value:Q", title="Value"),
-                ],
+        
+        # If all on same day, use bar chart for date instead
+        if len(agg) == 1:
+            _chart_container("Data Extraction Summary")
+            summary_data = pd.DataFrame({
+                "metric": ["Total Leads", "Missing Contact"],
+                "count": [len(timeline_df), timeline_df["missing_contact"].sum()]
+            })
+            chart = (
+                alt.Chart(summary_data)
+                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                .encode(
+                    x=alt.X("metric:N", title=""),
+                    y=alt.Y("count:Q", title="Count"),
+                    color=alt.Color("metric:N", scale=alt.Scale(scheme="tableau10"), legend=None),
+                    tooltip=["metric:N", "count:Q"],
+                )
+                .properties(height=260)
             )
-            .properties(height=320)
-        )
-        st.altair_chart(chart, use_container_width=True)
-        _chart_container_end()
+            st.altair_chart(chart, use_container_width=True)
+            _chart_container_end()
+        else:
+            long = agg.melt(id_vars=["bucket"], value_vars=["leads", "missing_contact"], var_name="series", value_name="value")
+            series_labels = {"leads": "Leads", "missing_contact": "Missing Contact"}
+            long["series"] = long["series"].map(series_labels).fillna(long["series"])
+
+            _chart_container("Data Extraction")
+            chart = (
+                alt.Chart(long)
+                .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6)
+                .encode(
+                    x=alt.X("bucket:T", title="Date"),
+                    y=alt.Y("value:Q", title="Count"),
+                    color=alt.Color("series:N", scale=alt.Scale(scheme="category10"), legend=alt.Legend(title="")),
+                    tooltip=[
+                        alt.Tooltip("bucket:T", title="Date"),
+                        alt.Tooltip("series:N", title="Series"),
+                        alt.Tooltip("value:Q", title="Value"),
+                    ],
+                )
+                .properties(height=320)
+            )
+            st.altair_chart(chart, use_container_width=True)
+            _chart_container_end()
     else:
-        st.info("Timeline chart needs WhatsApp-style timestamps in `date_stamp`.")
+        st.info("No valid timestamps found in `date_stamp` column.")
 
     # 2) Bottom row charts
     left, right = st.columns(2)
