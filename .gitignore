@@ -1,0 +1,26 @@
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+.env.*
+
+# Local outputs
+*.csv
+failed_messages_audit.csv
+
+# IDE/OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
