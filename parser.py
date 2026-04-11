@@ -165,8 +165,18 @@ def split_whatsapp_messages(raw_text: str) -> List[Dict[str, str]]:
                 ),
                 "",
             )
-            bhk = next((c for c in cells if re.search(r"\b\d+\s*(?:bhk|rk)\b", c, re.IGNORECASE)), "")
-            size = next((c for c in cells if re.search(r"\bsq", c, re.IGNORECASE)), "")
+            bhk_candidate = next((c for c in cells if re.search(r"\b\d+\s*(?:bhk|rk)\b", c, re.IGNORECASE)), "")
+            # Clean BHK: extract just the number + unit part
+            bhk = ""
+            if bhk_candidate:
+                bhk_match = re.search(r"(\d+)\s*(?:bhk|rk)\b", bhk_candidate, re.IGNORECASE)
+                bhk = f"{bhk_match.group(1)} BHK" if bhk_match else bhk_candidate
+            size_candidate = next((c for c in cells if re.search(r"\bsq", c, re.IGNORECASE)), "")
+            # Clean size: extract just the numeric + unit part, removing trailing noise like "1785 sq.ft /////"
+            size = ""
+            if size_candidate:
+                size_match = re.search(r"([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(sq\.?\s*ft|sq\s*ft|sqft|sft|sf|sq\.?\s*m|sqm)", size_candidate, re.IGNORECASE)
+                size = f"{size_match.group(1)} {size_match.group(2)}".strip() if size_match else size_candidate
             address = next((c for c in cells if "," in c and "pune" in c.lower()), "")
             area = ""
             if address:
@@ -177,11 +187,11 @@ def split_whatsapp_messages(raw_text: str) -> List[Dict[str, str]]:
             synthetic = "\n".join(
                 [
                     "*Resale Property*" if sell_or_rent == "sell" else "*Rental Property*",
-                    f"Owner: {owner} {phone}".strip(),
-                    f"Property Code: ",
-                    area,
-                    address,
-                    bhk,
+                    f"Owner Name: {owner}",
+                    f"Contact: {phone}" if phone else "",
+                    f"Area: {area}" if area else "",
+                    f"Address: {address}" if address else "",
+                    f"Type: {bhk}" if bhk else "",
                     f"Size: {size}" if size else "",
                     f"Price: {price}" if price else "",
                 ]

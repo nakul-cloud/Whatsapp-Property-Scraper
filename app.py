@@ -32,8 +32,8 @@ def apply_na_for_text_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in out.columns:
         if col in numeric_cols:
             continue
-        out[col] = out[col].astype("string").fillna("NA")
-        out[col] = out[col].replace({"": "NA", "nan": "NA", "<NA>": "NA"})
+        out[col] = out[col].astype("string").fillna("N/A")
+        out[col] = out[col].replace({"": "N/A", "nan": "N/A", "<NA>": "N/A"})
     return out
 
 
@@ -171,7 +171,7 @@ def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
         if c not in df_display.columns:
             continue
         col = df_display[c].astype(str).str.strip()
-        filled += (~col.isin(["NA", "", "nan", "<NA>"])).sum()
+        filled += (~col.isin(["N/A", "", "nan", "<NA>"])).sum()
         total += len(col)
     quality = (filled / total * 100) if total else 0.0
 
@@ -180,14 +180,14 @@ def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
         kpi_card("Total Leads", str(len(df)))
     with c2:
         unique_contacts = (
-            df_display["owner_contact"].astype(str).replace("NA", pd.NA).dropna().nunique()
+            df_display["owner_contact"].astype(str).replace("N/A", pd.NA).dropna().nunique()
             if "owner_contact" in df_display
             else 0
         )
         kpi_card("Unique Contacts", str(unique_contacts))
     with c3:
         avg_price = int(pd.to_numeric(df["rent_or_sell_price"], errors="coerce").dropna().mean()) if "rent_or_sell_price" in df else 0
-        kpi_card("Avg Price/Rent", f"{avg_price:,}" if avg_price else "NA")
+        kpi_card("Avg Price/Rent", f"{avg_price:,}" if avg_price else "N/A")
     with c4:
         kpi_card("Data Quality", f"{quality:.1f}%")
 
@@ -204,7 +204,7 @@ def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
     # Provide a secondary series to mimic a multi-line dashboard (e.g., missing-fields count)
     missing_fields_count = None
     if "owner_contact" in data_cols:
-        missing_fields_count = df_display["owner_contact"].astype(str).str.strip().isin(["NA", "", "nan", "<NA>"]).astype(int)
+        missing_fields_count = df_display["owner_contact"].astype(str).str.strip().isin(["N/A", "", "nan", "<NA>"]).astype(int)
     else:
         missing_fields_count = pd.Series([0] * len(df_display), dtype="int")
 
@@ -270,11 +270,11 @@ def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
     with left:
         _chart_container("Property Type Distribution")
         if "property_type" in data_cols:
-            vc = df_display["property_type"].astype("string").fillna("NA")
-            vc = vc.replace({"": "NA"})
+            vc = df_display["property_type"].astype("string").fillna("N/A")
+            vc = vc.replace({"": "N/A"})
             type_counts = vc.value_counts().reset_index()
             type_counts.columns = ["property_type", "count"]
-            type_counts = type_counts[type_counts["property_type"] != "NA"]
+            type_counts = type_counts[type_counts["property_type"] != "N/A"]
             if type_counts.empty:
                 st.info("No property type data available.")
             else:
@@ -297,7 +297,7 @@ def render_analysis(df: pd.DataFrame, df_display: pd.DataFrame) -> None:
     with right:
         _chart_container("Top Areas")
         if "area" in data_cols:
-            vc = df_display["area"].astype("string").replace("NA", pd.NA).dropna().str.strip()
+            vc = df_display["area"].astype("string").replace("N/A", pd.NA).dropna().str.strip()
             area_counts = vc.value_counts().head(12).reset_index()
             area_counts.columns = ["area", "count"]
             if area_counts.empty:
@@ -360,24 +360,30 @@ def main() -> None:
     with st.sidebar:
         st.subheader("Settings")
         enable_ai = st.toggle("Enable AI Fallback (Groq)", value=False)
-        groq_key = st.text_input("Groq API key (GROQ_API_KEY)", type="password", value=env("GROQ_API_KEY"))
+        
+        # Groq settings (only visible when AI is enabled)
+        groq_key = ""
+        groq_model = env("GROQ_MODEL", "llama-3.1-70b-versatile")
+        if enable_ai:
+            with st.expander("🔑 Groq Configuration", expanded=True):
+                groq_key = st.text_input("Groq API key (GROQ_API_KEY)", type="password", value=env("GROQ_API_KEY"))
 
-        model_options = [
-            env("GROQ_MODEL", "llama-3.1-70b-versatile"),
-            "llama-3.1-70b-versatile",
-            "llama-3.1-8b-instant",
-            "llama-3.3-70b-versatile",
-            "deepseek-r1-distill-llama-70b",
-            "mixtral-8x7b-32768",
-            "Custom…",
-        ]
-        # de-dupe while preserving order
-        seen = set()
-        model_options = [m for m in model_options if not (m in seen or seen.add(m))]
-        selected_model = st.selectbox("Groq model", options=model_options, index=0)
-        groq_model = selected_model
-        if selected_model == "Custom…":
-            groq_model = st.text_input("Custom Groq model id", value=env("GROQ_MODEL", "llama-3.1-70b-versatile"))
+                model_options = [
+                    env("GROQ_MODEL", "llama-3.1-70b-versatile"),
+                    "llama-3.1-70b-versatile",
+                    "llama-3.1-8b-instant",
+                    "llama-3.3-70b-versatile",
+                    "deepseek-r1-distill-llama-70b",
+                    "mixtral-8x7b-32768",
+                    "Custom…",
+                ]
+                # de-dupe while preserving order
+                seen = set()
+                model_options = [m for m in model_options if not (m in seen or seen.add(m))]
+                selected_model = st.selectbox("Groq model", options=model_options, index=0)
+                groq_model = selected_model
+                if selected_model == "Custom…":
+                    groq_model = st.text_input("Custom Groq model id", value=env("GROQ_MODEL", "llama-3.1-70b-versatile"))
 
         area_path = st.text_input(
             "Custom Pune areas file path (optional)",
