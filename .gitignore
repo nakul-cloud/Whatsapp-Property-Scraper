@@ -11,6 +11,11 @@ __pycache__/
 venv/
 env/
 
+# Node dependencies
+node_modules/
+Frontend/node_modules/
+leadextractor-hub/
+
 # Secrets
 .env
 .env.*
