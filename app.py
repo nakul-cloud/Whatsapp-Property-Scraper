@@ -31,8 +31,8 @@ def apply_na_for_text_columns(df: pd.DataFrame) -> pd.DataFrame:
     numeric_cols = {"rent_or_sell_price", "deposit"}
     for col in out.columns:
         if col in numeric_cols:
-            # Convert None/NaN in numeric cols to "N/A" for display
-            out[col] = out[col].fillna("N/A").astype(str).replace("nan", "N/A").replace("<NA>", "N/A")
+            # Convert to string first, then replace empty/nan with "N/A"
+            out[col] = out[col].astype(str).replace({"<NA>": "N/A", "None": "N/A", "nan": "N/A"})
             continue
         out[col] = out[col].astype("string").fillna("N/A")
         out[col] = out[col].replace({"": "N/A", "nan": "N/A", "<NA>": "N/A"})
