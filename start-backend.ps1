@@ -14,4 +14,4 @@ if (-not (Test-Path .venv)) {
 & .\.venv\Scripts\Activate.ps1
 
 # Run the backend
-python -m uvicorn backend:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn backend.backend:app --reload --host 0.0.0.0 --port 8000

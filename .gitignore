@@ -26,7 +26,6 @@ failed_messages_audit.csv
 
 # Streamlit
 .streamlit/
-app.py
 
 # Build artifacts
 dist/
