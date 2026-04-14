@@ -240,8 +240,8 @@ PROPERTY_CODE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-OWNER_LINE_RE = re.compile(r"^\s*owner\b\s*[:\-]?\s*(.+)$", re.IGNORECASE)
-OWNER_NAME_LINE_RE = re.compile(r"^\s*owner\s*(?:name)?\b\s*[:\-]?\s*(.+)$", re.IGNORECASE)
+OWNER_LINE_RE = re.compile(r"^\s*owner\s*(?!details?|contact|mobile|phone|name\b)\s*[:\-]?\s*(.+)$", re.IGNORECASE)
+OWNER_NAME_LINE_RE = re.compile(r"^\s*owner\s+name\b\s*[:\-]?\s*(.+)$", re.IGNORECASE)
 CONTACT_LINE_RE = re.compile(r"^\s*(?:owner\s*)?(?:mobile|phone|contact|number|no)\b\s*[:\-]?\s*(.+)$", re.IGNORECASE)
 
 SUB_TYPE_RE = re.compile(r"\b(\d+)\s*(bhk|rk)\b", re.IGNORECASE)
