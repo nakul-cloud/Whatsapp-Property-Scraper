@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 
 import altair as alt
@@ -13,7 +14,10 @@ from utils import env, normalize_whitespace
 
 def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
     buf = io.StringIO()
-    df.to_csv(buf, index=False)
+    writer = csv.DictWriter(buf, fieldnames=df.columns, quoting=csv.QUOTE_MINIMAL, lineterminator='\n')
+    writer.writeheader()
+    for _, row in df.iterrows():
+        writer.writerow(row.to_dict())
     return buf.getvalue().encode("utf-8")
 
 
@@ -36,6 +40,9 @@ def apply_na_for_text_columns(df: pd.DataFrame) -> pd.DataFrame:
             continue
         out[col] = out[col].astype("string").fillna("N/A")
         out[col] = out[col].replace({"": "N/A", "nan": "N/A", "<NA>": "N/A"})
+        # Clean tabs and excessive whitespace from text columns
+        out[col] = out[col].str.replace(r"[\t\r]+", " ", regex=True)
+        out[col] = out[col].str.replace(r"\s{2,}", " ", regex=True)
     return out
 
 
@@ -429,11 +436,24 @@ def main() -> None:
 
     rows = st.session_state.latest_rows
     meta = st.session_state.latest_meta
-    df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
+    
+    # Ensure all rows have all columns from OUTPUT_COLUMNS
+    cleaned_rows = []
+    for row in rows:
+        cleaned_row = {col: row.get(col, "") for col in OUTPUT_COLUMNS}
+        cleaned_rows.append(cleaned_row)
+    
+    df = pd.DataFrame(cleaned_rows, columns=OUTPUT_COLUMNS)
     df = normalize_df_types(df)
     df_display = apply_na_for_text_columns(df)
 
-    combined_df = pd.DataFrame(st.session_state.combined_rows, columns=OUTPUT_COLUMNS)
+    # Ensure all combined rows have all columns from OUTPUT_COLUMNS
+    cleaned_combined_rows = []
+    for row in st.session_state.combined_rows:
+        cleaned_row = {col: row.get(col, "") for col in OUTPUT_COLUMNS}
+        cleaned_combined_rows.append(cleaned_row)
+    
+    combined_df = pd.DataFrame(cleaned_combined_rows, columns=OUTPUT_COLUMNS) if cleaned_combined_rows else pd.DataFrame(columns=OUTPUT_COLUMNS)
     combined_df = normalize_df_types(combined_df) if not combined_df.empty else combined_df
     combined_df_display = apply_na_for_text_columns(combined_df) if not combined_df.empty else combined_df
 

@@ -49,6 +49,9 @@ export default function App() {
   });
   const [customAreasPath, setCustomAreasPath] = useState('');
 
+  const makeLeadKey = (lead: PropertyLead) =>
+    [lead.property_id, lead.owner_contact, lead.date_stamp].map((value) => (value ?? '').trim()).join('|');
+
   useEffect(() => {
     const cached = window.localStorage.getItem('combinedLeads');
     if (cached) {
@@ -103,7 +106,15 @@ export default function App() {
   };
 
   const handleExportCombinedCSV = async () => {
-    const rows = combinedLeads.length > 0 ? combinedLeads : leads;
+    const combinedMap = new Map<string, PropertyLead>();
+    for (const lead of combinedLeads) {
+      combinedMap.set(makeLeadKey(lead), lead);
+    }
+    for (const lead of leads) {
+      combinedMap.set(makeLeadKey(lead), lead);
+    }
+
+    const rows = Array.from(combinedMap.values());
 
     if (rows.length === 0) {
       toast.error('No combined data available');
@@ -132,10 +143,45 @@ export default function App() {
       return;
     }
 
-    const nextCombined = [...combinedLeads, ...leads];
+    const existingKeys = new Set(combinedLeads.map(makeLeadKey));
+    const nextCombined = [...combinedLeads];
+    for (const lead of leads) {
+      const key = makeLeadKey(lead);
+      if (existingKeys.has(key)) {
+        continue;
+      }
+      existingKeys.add(key);
+      nextCombined.push(lead);
+    }
+
     setCombinedLeads(nextCombined);
     window.localStorage.setItem('combinedLeads', JSON.stringify(nextCombined));
     toast.success(`Added ${leads.length} leads to combined cache`);
+  };
+
+  const handleRemoveFromCombined = () => {
+    if (leads.length === 0) {
+      toast.error('No current leads available to remove');
+      return;
+    }
+
+    const removeKeys = new Set(leads.map(makeLeadKey));
+    const nextCombined = combinedLeads.filter((lead) => !removeKeys.has(makeLeadKey(lead)));
+
+    setCombinedLeads(nextCombined);
+    window.localStorage.setItem('combinedLeads', JSON.stringify(nextCombined));
+    toast.success(`Removed ${combinedLeads.length - nextCombined.length} leads from combined cache`);
+  };
+
+  const handleClearCombined = () => {
+    if (combinedLeads.length === 0) {
+      toast.info('Combined cache is already empty');
+      return;
+    }
+
+    setCombinedLeads([]);
+    window.localStorage.removeItem('combinedLeads');
+    toast.success('Combined cache cleared');
   };
 
   const kpis = calculateKPIs(leads);
@@ -306,6 +352,9 @@ export default function App() {
                       <Button variant="outline" onClick={handleAddToCombined}>
                         Add to Combined
                       </Button>
+                      <Button variant="outline" onClick={handleRemoveFromCombined}>
+                        Remove from Combined
+                      </Button>
                       <Button onClick={handleExportCombinedCSV}>
                         Combined CSV Download
                       </Button>
@@ -336,6 +385,12 @@ export default function App() {
                     </Button>
                     <Button variant="outline" onClick={handleAddToCombined}>
                       Add to Combined
+                    </Button>
+                    <Button variant="outline" onClick={handleRemoveFromCombined}>
+                      Remove from Combined
+                    </Button>
+                    <Button variant="outline" onClick={handleClearCombined}>
+                      Clear Combined
                     </Button>
                     <Button onClick={handleExportCombinedCSV}>
                       Combined CSV Download

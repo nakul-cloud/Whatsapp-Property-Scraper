@@ -17,14 +17,14 @@ export async function processMessages(
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/process`, {
+    const response = await fetch(`${API_BASE_URL}/api/process-messages`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
         raw_text: messages,
-        enable_ai_fallback: !!groqConfig,
+        enable_ai: !!groqConfig,
         groq_api_key: groqConfig?.apiKey,
         groq_model: groqConfig?.model,
         area_path: customAreasPath,
@@ -46,17 +46,21 @@ export async function processMessages(
 }
 
 export async function exportCSV(data: any[]): Promise<Blob> {
-  const response = await fetch(`${API_BASE_URL}/api/export_csv`, {
+  const response = await fetch(`${API_BASE_URL}/api/download`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ rows: data }),
+    body: JSON.stringify(data),
   });
 
   if (!response.ok) {
     throw new Error(`Export Error: ${response.statusText}`);
   }
 
-  return response.blob();
+  // Backend returns JSON with csv_data string, convert to Blob
+  const result = await response.json();
+  const csvData = result.csv_data || '';
+  const blob = new Blob([csvData], { type: 'text/csv;charset=utf-8;' });
+  return blob;
 }

@@ -240,11 +240,11 @@ PROPERTY_CODE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-OWNER_LINE_RE = re.compile(r"^\s*owner\s*(?!details?|contact|mobile|phone|name\b)\s*[:\-]?\s*(.+)$", re.IGNORECASE)
+OWNER_LINE_RE = re.compile(r"^\s*owner(?!\s*details?)\s*[:\-]\s*(.+)$", re.IGNORECASE)
 OWNER_NAME_LINE_RE = re.compile(r"^\s*owner\s+name\b\s*[:\-]?\s*(.+)$", re.IGNORECASE)
 CONTACT_LINE_RE = re.compile(r"^\s*(?:owner\s*)?(?:mobile|phone|contact|number|no)\b\s*[:\-]?\s*(.+)$", re.IGNORECASE)
 
-SUB_TYPE_RE = re.compile(r"\b(\d+)\s*(bhk|rk)\b", re.IGNORECASE)
+SUB_TYPE_RE = re.compile(r"\b(\d+)\s*(bhk|rk|bedrooms?|beds?)\b", re.IGNORECASE)
 
 SIZE_RE = re.compile(
     r"\b(?:carpet\s*area|super\s*built[-\s]*up(?:\s*area)?|builtup(?:\s*area)?|built\s*up(?:\s*area)?|area|size)\b\s*[:\-]?\s*([0-9]{1,5}(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*(sq\.?\s*ft|sq\s*ft|sqft|sft|sf|sq\.?\s*m|sqm)?",
@@ -275,7 +275,7 @@ MONEY_TOKEN_RE = re.compile(r"₹?\s*\d+(?:[.,]\d+)?\s*(?:k|lac|lakh|cr|crore)?(
 
 DEPOSIT_RE = re.compile(r"\b(?:deposit|dep)\b\s*[:\-]?\s*([₹\s0-9.,]+(?:\s*(?:k|lac|lakh|cr|crore))?)\b", re.IGNORECASE)
 
-FLOOR_LINE_RE = re.compile(r"\bfloor\b\s*[:\-]?\s*([^,;|]+)", re.IGNORECASE)
+FLOOR_LINE_RE = re.compile(r"\bfloor\b\s*[:\-]\s*([^,;|]+)", re.IGNORECASE)
 FLOOR_VALUE_RE = re.compile(r"\b((?:g|gf|ground|upper\s*ground|ug|lower\s*ground|lg|\d{1,2}(?:st|nd|rd|th)?)(?:\s*(?:floor|flr))?)\b", re.IGNORECASE)
 ON_FLOOR_RE = re.compile(r"\bon\s+(\d{1,2}(?:st|nd|rd|th)?|g|gf|ground)\s*(?:floor|flr)?\b", re.IGNORECASE)
 
@@ -311,7 +311,19 @@ ADDRESS_KEYWORDS = [
 ]
 
 
+PROPERTY_SPEC_LINE_RE = re.compile(
+    r"\b(?:\d+\s*(?:bhk|rk|bedrooms?|beds?)|\d+\s*bathrooms?|\d+\s*balcon(?:y|ies)|super\s*built[-\s]*up|carpet\s*area|built\s*up|floor\s*plan|tenant\s*pref|parking|furnished|unfurnished)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_property_spec_line(ln: str) -> bool:
+    return bool(PROPERTY_SPEC_LINE_RE.search(ln))
+
+
 def _looks_like_address_line(ln: str) -> bool:
+    if _looks_like_property_spec_line(ln):
+        return False
     l = ln.lower()
     if "," in l:
         return True
@@ -372,6 +384,20 @@ def _build_rich_address(lines: List[str], area: str) -> str:
     address = ", ".join(dedup[:3])
     address = re.sub(r"\s*,\s*,+", ", ", address).strip(" ,")
     return address[:220]
+
+
+def _extract_sub_property_type(text: str) -> str:
+    matches = list(SUB_TYPE_RE.finditer(text))
+    if not matches:
+        return ""
+
+    # Prefer the first explicit subtype found in the message.
+    ms = matches[0]
+    count = ms.group(1).strip()
+    kind = ms.group(2).strip().lower()
+    if kind.startswith("bed"):
+        return f"{count} BHK"
+    return f"{count} {kind.upper()}"
 
 
 def _infer_area_from_lines(lines: List[str], areas: List[str]) -> str:
@@ -640,7 +666,10 @@ def _extract_floor(lines: List[str], full_text: str) -> str:
     for ln in lines:
         m = FLOOR_LINE_RE.search(ln)
         if m:
-            return _normalize_floor(m.group(1)[:80])
+            captured = m.group(1)[:80].strip()
+            # Validate: captured text should not contain area keywords or multiple slashes
+            if captured.count('/') <= 1 and not any(x in captured.lower() for x in ['built-up', 'builtup', 'carpet', 'area']):
+                return _normalize_floor(captured)
 
     # 2) "on 5th floor" style
     mo = ON_FLOOR_RE.search(full_text)
@@ -653,10 +682,10 @@ def _extract_floor(lines: List[str], full_text: str) -> str:
         if ll in {"g", "gf", "ground", "ug", "upper ground", "lg", "lower ground"}:
             return _normalize_floor(ll)
 
-    # 4) Inline floor token in relevant lines
+    # 4) Inline floor token in relevant lines (only if line explicitly mentions "tower" or "wing")
     for ln in lines:
         ll = ln.lower()
-        if "tower" in ll or "wing" in ll or "floor" in ll or "flr" in ll:
+        if "tower" in ll or "wing" in ll:
             mv = FLOOR_VALUE_RE.search(ln)
             if mv:
                 return _normalize_floor(mv.group(1))
@@ -665,7 +694,7 @@ def _extract_floor(lines: List[str], full_text: str) -> str:
 
 def _clean_person_name(name: str) -> str:
     cleaned = normalize_whitespace(name)
-    cleaned = re.sub(r"\b(?:owner|contact|mobile|phone|number|no)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:owner|details?|contact|mobile|phone|number|no)\b", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"[\[\]\(\)\-:|,]+", " ", cleaned)
     cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
     return normalize_title(cleaned)
@@ -789,9 +818,7 @@ def rule_parse_message(msg: Dict[str, str], areas: List[str]) -> Tuple[Dict[str,
     row["owner_contact"] = owner_contact
 
     # sub_property_type
-    ms = SUB_TYPE_RE.search(text)
-    if ms:
-        row["sub_property_type"] = f"{ms.group(1)} {ms.group(2).upper()}"
+    row["sub_property_type"] = _extract_sub_property_type(text)
 
     # size
     row["size"] = _extract_size(lines)
