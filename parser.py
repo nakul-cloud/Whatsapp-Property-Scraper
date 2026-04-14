@@ -1038,6 +1038,8 @@ def process_raw_text(
     final_rows: List[Dict[str, Any]] = []
     seen_property_ids: set[str] = set()
     audit_failed: List[Dict[str, Any]] = []
+    seen_duplicates = set()
+
     for idx, msg in enumerate(msgs):
         r = rows_by_msg_idx[idx]
         if r is None:
@@ -1051,6 +1053,15 @@ def process_raw_text(
         out["floor"] = _normalize_floor(str(out.get("floor", ""))) if str(out.get("floor", "")).strip() else ""
         out["rent_or_sell_price"] = out.get("rent_or_sell_price") or None
         out["deposit"] = out.get("deposit") or None
+
+        dup_key = (
+            str(out.get("owner_name", "")).strip().lower(),
+            str(out.get("owner_contact", "")).strip().lower(),
+            str(out.get("address", "")).strip().lower(),
+        )
+        if dup_key != ("", "", "") and dup_key in seen_duplicates:
+            continue
+        seen_duplicates.add(dup_key)
 
         # Auto-assign random unique property_id if missing
         pid = normalize_whitespace(str(out.get("property_id", "")))

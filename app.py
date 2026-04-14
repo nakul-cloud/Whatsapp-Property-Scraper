@@ -50,19 +50,23 @@ def merge_combined_rows(existing: list[dict], incoming: list[dict]) -> list[dict
     merged = list(existing)
     seen = {
         (
-            str(r.get("property_id", "")),
-            str(r.get("owner_contact", "")),
-            str(r.get("date_stamp", "")),
+            str(r.get("owner_name", "")).strip().lower(),
+            str(r.get("owner_contact", "")).strip().lower(),
+            str(r.get("address", "")).strip().lower(),
         )
         for r in merged
     }
+    # Do not treat completely empty records as duplicates of each other based on these fields
+    if ("", "", "") in seen:
+        seen.remove(("", "", ""))
+        
     for r in incoming:
         key = (
-            str(r.get("property_id", "")),
-            str(r.get("owner_contact", "")),
-            str(r.get("date_stamp", "")),
+            str(r.get("owner_name", "")).strip().lower(),
+            str(r.get("owner_contact", "")).strip().lower(),
+            str(r.get("address", "")).strip().lower(),
         )
-        if key in seen:
+        if key != ("", "", "") and key in seen:
             continue
         merged.append(r)
         seen.add(key)
